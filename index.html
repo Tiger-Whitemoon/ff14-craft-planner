@@ -733,7 +733,8 @@ document.getElementById("resetBtn").addEventListener("click", e => {
   } else {
     sel.value = "PLD";
   }
-  runSearch();   // 前回の条件（初回はナイトLv50の例）で一覧を表示
+  // 自動では検索しない。前回の条件を入力欄に戻すだけで、「装備を検索」を押すまで待つ
+  setStatus("条件を確認して「装備を検索」を押してください。");
 })();
 </script>
 </body>
