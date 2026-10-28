@@ -113,15 +113,19 @@ input.owned { width: 5.5em; padding: 4px 6px; border: 1px solid var(--line); bor
 .mat-group h3 small { font-family: var(--font-body); font-size: .8rem; font-weight: 400; color: var(--muted); }
 .delta { display: inline-block; margin-left: 6px; font-size: .75rem; color: var(--ok); font-weight: 500; }
 .crafter { font-size: .8rem; color: var(--muted); white-space: nowrap; }
+.split { display: block; font-size: .72rem; color: var(--muted); font-family: var(--font-body); white-space: nowrap; }
+.split:empty { display: none; }
 .done { color: var(--ok); }
 tr.is-done td { color: var(--muted); }
 @media (max-width: 640px) {
   table { min-width: 0; }
   thead { display: none; }
-  .mat-body tr[data-id] { display: grid; grid-template-columns: 1fr 1fr 1fr; grid-template-areas: "name name name" "need own short" "kind craft craft";
+  .mat-body tr[data-id] { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-template-areas: "name name name" "need own short" "kind craft craft";
     gap: 6px 10px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
   .mat-body td { border: 0; padding: 0; }
   .mat-body td.r { text-align: left; }
+  .split > span { display: block; }
+  .split .sep { display: none; }
   .c-name { grid-area: name; } .c-need { grid-area: need; } .c-own { grid-area: own; } .c-short { grid-area: short; }
   .c-kind { grid-area: kind; } .c-craft { grid-area: craft; text-align: right; }
   .mat-body td[data-label]::before { content: attr(data-label); display: block; font-size: .7rem; color: var(--muted); font-family: var(--font-body); }
@@ -626,7 +630,7 @@ function buildMatRows(plan) {
       const it = items.get(id), [kind, cls] = kindOf(id, plan);
       return `<tr data-id="${id}">${nameCell(it)}
         <td class="c-kind"><span class="kind ${cls}">${kind}</span></td>
-        <td class="r num c-need" data-label="必要数"><span data-need></span><span class="delta" data-delta title="中間素材の所持分で減った数"></span></td>${ownCell(id, it)}
+        <td class="r num c-need" data-label="必要数"><span data-need></span><span class="delta" data-delta title="中間素材の所持分で減った数"></span>${kindOf(id, plan)[0] === "クリスタル" ? `<span class="split" data-split></span>` : ""}</td>${ownCell(id, it)}
         <td class="r num c-short" data-short data-label="不足"></td>
       </tr>`;
     }).join("");
@@ -635,6 +639,12 @@ function buildMatRows(plan) {
 function updateMatRows(plan) {
   // 中間素材を1つも持っていない場合の必要数（末端素材の減少量の表示用）
   const base = compute(id => isMid(id) ? 0 : (owned.get(id) || 0));
+  // 装備そのものを作るのに使う数（クリスタルの内訳用）。残りは中間素材用
+  const forEquip = new Map();
+  for (const id of plan.roots.keys()) {
+    const times = plan.crafts.get(id) || 0;
+    for (const ing of recipes.get(id)?.ings || []) forEquip.set(ing.id, (forEquip.get(ing.id) || 0) + times * ing.amt);
+  }
   let shortKinds = 0, totalKinds = 0;
   for (const tr of document.querySelectorAll(".mat-body tr[data-id]")) {
     const id = +tr.dataset.id, need = plan.need.get(id) || 0, short = Math.max(0, need - (owned.get(id) || 0));
@@ -642,6 +652,11 @@ function updateMatRows(plan) {
     tr.querySelector("[data-need]").textContent = need.toLocaleString();
     const d = tr.querySelector("[data-delta]");
     if (d) { const diff = (base.need.get(id) || 0) - need; d.textContent = diff > 0 ? `−${diff.toLocaleString()}` : ""; }
+    const sp = tr.querySelector("[data-split]");
+    if (sp) {
+      const eq = Math.min(need, forEquip.get(id) || 0);
+      sp.innerHTML = need ? `<span>装備用 ${eq.toLocaleString()}</span><span class="sep">／</span><span>中間素材用 ${(need - eq).toLocaleString()}</span>` : "";
+    }
     const s = tr.querySelector("[data-short]");
     if (isMid(id) && !crafted) {
       s.textContent = short ? `購入 ${short.toLocaleString()}` : "✓";
