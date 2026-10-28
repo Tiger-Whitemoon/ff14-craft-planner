@@ -108,18 +108,23 @@ tr:last-child td { border-bottom: 0; }
 .kind.k-gather { color: var(--ok); }
 input.owned { width: 5.5em; padding: 4px 6px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); text-align: right; font-family: var(--font-data); }
 .short { color: var(--warn); font-weight: 700; }
+.mat-group { display: grid; gap: 8px; margin-top: 18px; }
+.mat-group h3 { margin: 0; font-family: var(--font-display); font-size: 1.05rem; font-weight: 600; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.mat-group h3 small { font-family: var(--font-body); font-size: .8rem; font-weight: 400; color: var(--muted); }
+.delta { display: inline-block; margin-left: 6px; font-size: .75rem; color: var(--ok); font-weight: 500; }
+.crafter { font-size: .8rem; color: var(--muted); white-space: nowrap; }
 .done { color: var(--ok); }
 tr.is-done td { color: var(--muted); }
 @media (max-width: 640px) {
   table { min-width: 0; }
   thead { display: none; }
-  #matBody tr[data-id] { display: grid; grid-template-columns: 1fr 1fr 1fr; grid-template-areas: "name name name" "need own short" "kind craft craft";
+  .mat-body tr[data-id] { display: grid; grid-template-columns: 1fr 1fr 1fr; grid-template-areas: "name name name" "need own short" "kind craft craft";
     gap: 6px 10px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
-  #matBody td { border: 0; padding: 0; }
-  #matBody td.r { text-align: left; }
+  .mat-body td { border: 0; padding: 0; }
+  .mat-body td.r { text-align: left; }
   .c-name { grid-area: name; } .c-need { grid-area: need; } .c-own { grid-area: own; } .c-short { grid-area: short; }
   .c-kind { grid-area: kind; } .c-craft { grid-area: craft; text-align: right; }
-  #matBody td[data-label]::before { content: attr(data-label); display: block; font-size: .7rem; color: var(--muted); font-family: var(--font-body); }
+  .mat-body td[data-label]::before { content: attr(data-label); display: block; font-size: .7rem; color: var(--muted); font-family: var(--font-body); }
 }
 
 /* 製作手順 */
@@ -177,11 +182,25 @@ footer { font-size: .8rem; color: var(--muted); border-top: 1px solid var(--line
       </div>
     </div>
     <div class="summary" id="summary"></div>
-    <div class="table-wrap" style="margin-top:8px">
-      <table>
-        <thead><tr><th>素材</th><th>種別</th><th class="r">必要数</th><th class="r">所持数</th><th class="r">不足</th><th>自作</th></tr></thead>
-        <tbody id="matBody"><tr><td colspan="6" class="empty">装備を検索すると素材が表示されます。</td></tr></tbody>
-      </table>
+    <div id="matSection">
+      <div class="mat-group">
+        <h3>中間素材 <small>自分で作る素材。所持数を入れると、その分の末端素材が減ります</small></h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>素材</th><th>製作職</th><th class="r">必要数</th><th class="r">所持数</th><th class="r">作る数</th><th>自作</th></tr></thead>
+            <tbody id="midBody" class="mat-body"><tr><td colspan="6" class="empty">装備を検索すると素材が表示されます。</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="mat-group">
+        <h3>末端素材 <small>採集・購入・ドロップで集める素材</small></h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>素材</th><th>入手</th><th class="r">必要数</th><th class="r">所持数</th><th class="r">不足</th></tr></thead>
+            <tbody id="matBody" class="mat-body"><tr><td colspan="5" class="empty">装備を検索すると素材が表示されます。</td></tr></tbody>
+          </table>
+        </div>
+      </div>
     </div>
     <textarea id="copyArea" class="sr" aria-hidden="true" tabindex="-1"></textarea>
   </section>
@@ -484,7 +503,7 @@ async function expandMaterials(rootIds) {
 }
 
 /* ===================== 計算 ===================== */
-function compute() {
+function compute(ownedOf = id => owned.get(id) || 0) {
   const blocked = blockedSlots();
   const roots = new Map();
   for (const [slot] of SLOTS) {
@@ -505,24 +524,25 @@ function compute() {
     }
   }
   // トポロジカル順に必要数を流す
-  const need = new Map([...roots]), order = [], crafts = new Map();
+  const need = new Map([...roots]), order = [], crafts = new Map(), depth = new Map([...roots.keys()].map(id => [id, 0]));
   const queue = [...roots.keys()].filter(id => indeg.get(id) === 0);
   while (queue.length) {
     const id = queue.shift();
     order.push(id);
     const req = need.get(id) || 0;
-    const net = Math.max(0, req - (owned.get(id) || 0));
+    const net = Math.max(0, req - ownedOf(id));
     if (expandable(id)) {
       const r = recipes.get(id), times = Math.ceil(net / r.yield);
       crafts.set(id, times);
       for (const ing of r.ings) {
         need.set(ing.id, (need.get(ing.id) || 0) + times * ing.amt);
+        depth.set(ing.id, Math.max(depth.get(ing.id) || 0, depth.get(id) + 1));
         indeg.set(ing.id, indeg.get(ing.id) - 1);
         if (indeg.get(ing.id) === 0) queue.push(ing.id);
       }
     }
   }
-  return { roots, need, order, crafts, expandable };
+  return { roots, need, order, crafts, expandable, depth };
 }
 
 function kindOf(id, plan) {
@@ -575,37 +595,63 @@ function recomputeAndRender(rebuild) {
   renderSteps(plan);
 }
 
+function isMid(id) { return recipes.has(id); }
+
 function buildMatRows(plan) {
   const ids = plan.order.filter(id => !plan.roots.has(id));
-  ids.sort((a, b) => kindOf(a, plan)[2] - kindOf(b, plan)[2] || a - b);
-  matRows = ids;
-  const body = document.getElementById("matBody");
-  if (!ids.length) { body.innerHTML = `<tr><td colspan="6" class="empty">${noneChosenMsg() || "素材はありません。"}</td></tr>`; return; }
-  body.innerHTML = ids.map(id => {
-    const it = items.get(id), [kind, cls] = kindOf(id, plan), isRecipe = recipes.has(id);
-    return `<tr data-id="${id}">
-      <td class="c-name"><div class="mat">${img(it.icon, 28)}<span>${dbLink(it.name)}</span></div></td>
-      <td class="c-kind"><span class="kind ${cls}">${kind}</span></td>
-      <td class="r num c-need" data-need data-label="必要数"></td>
-      <td class="r c-own" data-label="所持数"><label class="sr" for="own-${id}">${esc(it.name)}の所持数</label><input class="owned" id="own-${id}" data-own="${id}" type="number" min="0" inputmode="numeric" value="${owned.get(id) || ""}" placeholder="0"></td>
-      <td class="r num c-short" data-short data-label="不足"></td>
-      <td class="c-craft">${isRecipe ? `<label><input type="checkbox" data-craft="${id}"${buyOnly.has(id) ? "" : " checked"}> <span class="sr">${esc(it.name)}を</span>自作</label>` : ""}</td>
-    </tr>`;
-  }).join("");
+  // 装備に近い（上位の）中間素材から順に並べる
+  const mids = ids.filter(isMid).sort((a, b) => plan.depth.get(a) - plan.depth.get(b) || recipes.get(b).lv - recipes.get(a).lv || a - b);
+  const raws = ids.filter(id => !isMid(id)).sort((a, b) => kindOf(a, plan)[2] - kindOf(b, plan)[2] || a - b);
+  matRows = [...mids, ...raws];
+  const ownCell = (id, it) => `<td class="r c-own" data-label="所持数"><label class="sr" for="own-${id}">${esc(it.name)}の所持数</label><input class="owned" id="own-${id}" data-own="${id}" type="number" min="0" inputmode="numeric" value="${owned.get(id) || ""}" placeholder="0"></td>`;
+  const nameCell = it => `<td class="c-name"><div class="mat">${img(it.icon, 28)}<span>${dbLink(it.name)}</span></div></td>`;
+  const empty = (cols, text) => `<tr><td colspan="${cols}" class="empty">${text}</td></tr>`;
+  const none = noneChosenMsg();
+
+  document.getElementById("midBody").innerHTML = !ids.length ? empty(6, none || "素材はありません。")
+    : !mids.length ? empty(6, "中間素材はありません。")
+    : mids.map(id => {
+      const it = items.get(id), r = recipes.get(id);
+      return `<tr data-id="${id}">${nameCell(it)}
+        <td class="c-kind"><span class="crafter">${esc(r.crafters.join("・"))} Lv${r.lv}</span></td>
+        <td class="r num c-need" data-need data-label="必要数"></td>${ownCell(id, it)}
+        <td class="r num c-short" data-short data-label="作る数"></td>
+        <td class="c-craft"><label><input type="checkbox" data-craft="${id}"${buyOnly.has(id) ? "" : " checked"}> <span class="sr">${esc(it.name)}を</span>自作</label></td>
+      </tr>`;
+    }).join("");
+
+  document.getElementById("matBody").innerHTML = !ids.length ? empty(5, none || "素材はありません。")
+    : !raws.length ? empty(5, "末端素材はありません。")
+    : raws.map(id => {
+      const it = items.get(id), [kind, cls] = kindOf(id, plan);
+      return `<tr data-id="${id}">${nameCell(it)}
+        <td class="c-kind"><span class="kind ${cls}">${kind}</span></td>
+        <td class="r num c-need" data-label="必要数"><span data-need></span><span class="delta" data-delta title="中間素材の所持分で減った数"></span></td>${ownCell(id, it)}
+        <td class="r num c-short" data-short data-label="不足"></td>
+      </tr>`;
+    }).join("");
 }
 
 function updateMatRows(plan) {
+  // 中間素材を1つも持っていない場合の必要数（末端素材の減少量の表示用）
+  const base = compute(id => isMid(id) ? 0 : (owned.get(id) || 0));
   let shortKinds = 0, totalKinds = 0;
-  for (const tr of document.querySelectorAll("#matBody tr[data-id]")) {
+  for (const tr of document.querySelectorAll(".mat-body tr[data-id]")) {
     const id = +tr.dataset.id, need = plan.need.get(id) || 0, short = Math.max(0, need - (owned.get(id) || 0));
+    const crafted = plan.expandable(id);
     tr.querySelector("[data-need]").textContent = need.toLocaleString();
+    const d = tr.querySelector("[data-delta]");
+    if (d) { const diff = (base.need.get(id) || 0) - need; d.textContent = diff > 0 ? `−${diff.toLocaleString()}` : ""; }
     const s = tr.querySelector("[data-short]");
-    s.textContent = short ? short.toLocaleString() : "✓";
-    s.className = "r num c-short " + (short ? "short" : "done");
-    const isMidCrafted = plan.expandable(id);
+    if (isMid(id) && !crafted) {
+      s.textContent = short ? `購入 ${short.toLocaleString()}` : "✓";
+    } else {
+      s.textContent = short ? short.toLocaleString() : "✓";
+    }
+    s.className = "r num c-short " + (short ? (crafted ? "" : "short") : "done");
     tr.classList.toggle("is-done", !short);
-    tr.hidden = filterShort && (!short || isMidCrafted);
-    if (!isMidCrafted) { totalKinds++; if (short) shortKinds++; }
+    tr.hidden = filterShort && !short;
+    if (!crafted) { totalKinds++; if (short) shortKinds++; }
   }
   document.getElementById("summary").innerHTML = matRows.length
     ? `<span>集める・買う素材 <b class="num">${totalKinds}</b> 種</span><span>うち不足 <b class="num">${shortKinds}</b> 種</span>`
@@ -663,7 +709,7 @@ document.getElementById("slots").addEventListener("change", e => {
   renderSlots();
   recomputeAndRender(true);
 });
-document.getElementById("matBody").addEventListener("input", e => {
+document.getElementById("matSection").addEventListener("input", e => {
   const id = +e.target.dataset.own;
   if (!id) return;
   const v = Math.max(0, Math.floor(+e.target.value || 0));
@@ -671,7 +717,7 @@ document.getElementById("matBody").addEventListener("input", e => {
   saveOwned();
   recomputeAndRender(false);
 });
-document.getElementById("matBody").addEventListener("change", e => {
+document.getElementById("matSection").addEventListener("change", e => {
   const id = +e.target.dataset.craft;
   if (!id) return;
   e.target.checked ? buyOnly.delete(id) : buyOnly.add(id);
