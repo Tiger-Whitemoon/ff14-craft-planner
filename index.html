@@ -1,0 +1,697 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>エオルゼア装備クラフトプランナー</title>
+<meta name="description" content="FF14のジョブとレベルから製作装備一式と必要素材を計算する非公式ツール">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Shippori+Mincho+B1:wght@600;800&family=Zen+Kaku+Gothic+New:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: 作業台のような1列構成。上に条件バー、下に「装備（部位カード）→ 素材台帳 → 製作手順」 */
+:root {
+  --bg: #eef0f3;          /* 青みのある石板グレー */
+  --surface: #f9fafb;
+  --line: #cfd5dd;
+  --fg: #1c2330;
+  --muted: #5b6575;
+  --accent: #1f6f7a;      /* エーテライト色 */
+  --accent-soft: #d6eaec;
+  --brass: #9a6b1f;       /* HQ・アイテムLvの真鍮色 */
+  --warn: #b3412e;
+  --ok: #2f7a4a;
+  --font-display: "Shippori Mincho B1", "Hiragino Mincho ProN", "Yu Mincho", serif;
+  --font-body: "Zen Kaku Gothic New", "Hiragino Sans", "Yu Gothic", "Meiryo", sans-serif;
+  --font-data: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  --radius: 6px;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #12161d; --surface: #1a2029; --line: #2e3744; --fg: #e3e7ee; --muted: #9aa5b5;
+  --accent: #5bb8c4; --accent-soft: #1d3a40; --brass: #d9a54c; --warn: #ec7a64; --ok: #6cc28c; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #12161d; --surface: #1a2029; --line: #2e3744; --fg: #e3e7ee; --muted: #9aa5b5;
+  --accent: #5bb8c4; --accent-soft: #1d3a40; --brass: #d9a54c; --warn: #ec7a64; --ok: #6cc28c; color-scheme: dark }
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+img { max-width: 100%; }
+body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 15px; line-height: 1.6; }
+.wrap { max-width: 1080px; margin: 0 auto; padding-block: 24px 48px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid; gap: 28px; }
+.wrap > * { min-width: 0; }
+h1, h2 { font-family: var(--font-display); text-wrap: balance; margin: 0; }
+h1 { font-size: clamp(1.5rem, 4vw, 2.1rem); font-weight: 800; letter-spacing: .02em; }
+h2 { font-size: 1.25rem; font-weight: 600; display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+h2 small { font-family: var(--font-body); font-size: .8rem; color: var(--muted); font-weight: 400; }
+a { color: var(--accent); }
+.sub { color: var(--muted); margin: 4px 0 0; max-width: 62ch; }
+.num { font-family: var(--font-data); font-variant-numeric: tabular-nums; }
+button, input, select { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* 条件バー */
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; }
+form.query { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px 16px; align-items: end; }
+.field { display: grid; gap: 4px; min-width: 0; }
+.field > span { font-size: .78rem; color: var(--muted); letter-spacing: .04em; }
+.field input[type=number], .field select { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg); }
+.checks { display: flex; flex-direction: column; gap: 4px; font-size: .88rem; }
+.checks label { display: flex; gap: 6px; align-items: center; }
+.btn { padding: 9px 16px; border-radius: var(--radius); border: 1px solid var(--line); background: var(--surface); cursor: pointer; }
+.btn:hover { border-color: var(--accent); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--surface); font-weight: 700; }
+.btn.primary:hover { filter: brightness(1.08); }
+.btn:disabled { opacity: .55; cursor: progress; }
+.status { font-size: .9rem; color: var(--muted); min-height: 1.6em; }
+.status.error { color: var(--warn); }
+
+/* 装備カード */
+.slots { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 10px; }
+.slot { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px; display: grid; gap: 8px; min-width: 0; }
+.slot.off { opacity: .6; }
+.slot-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.slot-name { font-size: .78rem; letter-spacing: .08em; color: var(--muted); }
+.slot-make { font-size: .82rem; display: flex; gap: 4px; align-items: center; }
+.item { display: grid; grid-template-columns: 40px 1fr; gap: 10px; align-items: center; min-width: 0; }
+.item img, .ico-ph { width: 40px; height: 40px; border-radius: 4px; background: var(--bg); border: 1px solid var(--line); }
+.item-name { font-weight: 700; overflow-wrap: anywhere; }
+.meta { font-size: .8rem; color: var(--muted); display: flex; flex-wrap: wrap; gap: 2px 10px; }
+.ilvl { color: var(--brass); font-weight: 500; }
+.tag { font-size: .72rem; padding: 0 6px; border-radius: 3px; border: 1px solid currentColor; }
+.tag.warn { color: var(--warn); }
+.slot select { width: 100%; padding: 6px 8px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg); font-size: .85rem; }
+.empty { color: var(--muted); font-size: .9rem; }
+
+/* 素材台帳 */
+.toolbar { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.seg button { border: 0; background: var(--surface); padding: 6px 12px; cursor: pointer; }
+.seg button[aria-pressed=true] { background: var(--accent-soft); color: var(--accent); font-weight: 700; }
+.summary { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: .88rem; color: var(--muted); }
+.summary b { color: var(--fg); }
+.table-wrap { position: relative; overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+table { border-collapse: collapse; width: 100%; min-width: 620px; }
+th, td { padding: 7px 10px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: middle; }
+th { font-size: .75rem; letter-spacing: .06em; color: var(--muted); font-weight: 500; background: var(--bg); position: sticky; top: 0; }
+td.r, th.r { text-align: right; }
+tr:last-child td { border-bottom: 0; }
+.mat { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.mat img { width: 28px; height: 28px; border-radius: 3px; }
+.kind { font-size: .75rem; padding: 1px 7px; border-radius: 10px; background: var(--bg); color: var(--muted); white-space: nowrap; }
+.kind.k-mid { background: var(--accent-soft); color: var(--accent); }
+.kind.k-gather { color: var(--ok); }
+input.owned { width: 5.5em; padding: 4px 6px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); text-align: right; font-family: var(--font-data); }
+.short { color: var(--warn); font-weight: 700; }
+.done { color: var(--ok); }
+tr.is-done td { color: var(--muted); }
+@media (max-width: 640px) {
+  table { min-width: 0; }
+  thead { display: none; }
+  #matBody tr[data-id] { display: grid; grid-template-columns: 1fr 1fr 1fr; grid-template-areas: "name name name" "need own short" "kind craft craft";
+    gap: 6px 10px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+  #matBody td { border: 0; padding: 0; }
+  #matBody td.r { text-align: left; }
+  .c-name { grid-area: name; } .c-need { grid-area: need; } .c-own { grid-area: own; } .c-short { grid-area: short; }
+  .c-kind { grid-area: kind; } .c-craft { grid-area: craft; text-align: right; }
+  #matBody td[data-label]::before { content: attr(data-label); display: block; font-size: .7rem; color: var(--muted); font-family: var(--font-body); }
+}
+
+/* 製作手順 */
+ol.steps { margin: 0; padding: 0 0 0 1.6em; display: grid; gap: 6px; }
+ol.steps li { padding-left: 4px; }
+ol.steps .who { color: var(--muted); font-size: .85rem; }
+footer { font-size: .8rem; color: var(--muted); border-top: 1px solid var(--line); padding-top: 14px; display: grid; gap: 4px; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+@media (prefers-reduced-motion: no-preference) { .btn { transition: filter .15s, border-color .15s; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>エオルゼア装備クラフトプランナー</h1>
+    <p class="sub">ジョブとレベルを選ぶと、作れる装備の中で一番強い一式と、その素材の合計が分かります。手持ちの数を入れると不足分だけを計算します。</p>
+  </header>
+
+  <section class="panel" aria-label="検索条件">
+    <form class="query" id="queryForm">
+      <label class="field"><span>ジョブ</span><select id="job" required><option value="">読み込み中…</option></select></label>
+      <label class="field"><span>現在のレベル</span><input id="level" type="number" min="1" max="100" value="50" inputmode="numeric"></label>
+      <label class="field"><span>検索幅（何レベル下まで）</span><input id="range" type="number" min="1" max="20" value="10" inputmode="numeric"></label>
+      <div class="checks">
+        <label><input type="checkbox" id="exSecret"> 秘伝書レシピを除外</label>
+        <label><input type="checkbox" id="exExpert" checked> エキスパートを除外</label>
+      </div>
+      <button class="btn primary" id="searchBtn" type="submit">装備を検索</button>
+    </form>
+    <p class="status" id="status" role="status" aria-live="polite"></p>
+  </section>
+
+  <section aria-labelledby="gearTitle">
+    <h2 id="gearTitle">装備一式 <small id="gearNote"></small></h2>
+    <div class="slots" id="slots" style="margin-top:12px"><p class="empty">ジョブとレベルを選んで「装備を検索」を押してください。</p></div>
+  </section>
+
+  <section aria-labelledby="matTitle">
+    <h2 id="matTitle">必要素材 <small>所持数は自動で保存されます</small></h2>
+    <div class="toolbar" style="margin-top:12px">
+      <div class="seg" role="group" aria-label="表示の絞り込み">
+        <button type="button" id="fAll" aria-pressed="true">すべて</button>
+        <button type="button" id="fShort" aria-pressed="false">不足のみ</button>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button type="button" class="btn" id="copyBtn">不足リストをコピー</button>
+        <button type="button" class="btn" id="resetBtn">所持数をリセット</button>
+      </div>
+    </div>
+    <div class="summary" id="summary"></div>
+    <div class="table-wrap" style="margin-top:8px">
+      <table>
+        <thead><tr><th>素材</th><th>種別</th><th class="r">必要数</th><th class="r">所持数</th><th class="r">不足</th><th>自作</th></tr></thead>
+        <tbody id="matBody"><tr><td colspan="6" class="empty">装備を検索すると素材が表示されます。</td></tr></tbody>
+      </table>
+    </div>
+    <textarea id="copyArea" class="sr" aria-hidden="true" tabindex="-1"></textarea>
+  </section>
+
+  <section aria-labelledby="stepTitle">
+    <h2 id="stepTitle">製作手順 <small>上から順に作ると素材がそろいます</small></h2>
+    <div class="panel" style="margin-top:12px"><ol class="steps" id="steps"><li class="empty">まだ手順はありません。</li></ol></div>
+  </section>
+
+  <footer>
+    <span>非公式のファンツールです。株式会社スクウェア・エニックスとは関係ありません。</span>
+    <span>ツール本体 © 2026 Tiger_Whitemoon. All rights reserved. 無断での複製・改変・再配布・転載を禁じます。</span>
+    <span>記載されているアイテム名・アイコン等の著作権は © SQUARE ENIX に帰属します。</span>
+    <span>ゲームデータ：<a href="https://v2.xivapi.com/" target="_blank" rel="noopener">XIVAPI</a> ／ 詳細確認：<a href="https://jp.finalfantasyxiv.com/lodestone/playguide/db/" target="_blank" rel="noopener">エオルゼアデータベース</a></span>
+  </footer>
+</div>
+
+<script>
+"use strict";
+/* ===================== 設定 ===================== */
+const API = "https://v2.xivapi.com/api";
+const MAX_LEVEL = 100;           // レベル上限（パッチで変わったらここを変更）
+const MAX_DEPTH = 6;             // 中間素材をさかのぼる最大段数
+const CHUNK = 40;                // 1回の検索でまとめるアイテム数
+const CRYSTAL_UI_CATEGORY = 59;
+const DB_SEARCH = "https://jp.finalfantasyxiv.com/lodestone/playguide/db/item/?q=";
+
+const SLOTS = [
+  ["main", "武器"], ["off", "盾・副道具"], ["head", "頭"], ["body", "胴"], ["hands", "手"], ["legs", "脚"],
+  ["feet", "足"], ["ears", "耳"], ["neck", "首"], ["wrists", "腕"], ["ringL", "指輪（左）"], ["ringR", "指輪（右）"],
+];
+const SLOT_LABEL = Object.fromEntries(SLOTS);
+// EquipSlotCategory → [部位, ふさがる部位]
+const CATEGORY = {
+  1: ["main", []], 13: ["main", ["off"]], 14: ["main", ["off"]], 2: ["off", []],
+  3: ["head", []], 4: ["body", []], 5: ["hands", []], 7: ["legs", []], 8: ["feet", []],
+  9: ["ears", []], 10: ["neck", []], 11: ["wrists", []], 12: ["ring", []],
+  15: ["body", ["head"]], 16: ["body", ["hands", "legs", "feet"]], 18: ["legs", ["feet"]],
+  19: ["body", ["head", "hands", "legs", "feet"]], 20: ["body", ["hands", "legs"]],
+  21: ["body", ["legs", "feet"]], 22: ["body", ["hands"]], 23: ["body", ["legs"]],
+};
+const JOB_GROUPS = [
+  ["tank", "タンク"], ["healer", "ヒーラー"], ["melee", "近接DPS"], ["ranged", "遠隔物理DPS"],
+  ["caster", "魔法DPS"], ["crafter", "クラフター"], ["gatherer", "ギャザラー"],
+];
+
+/* ===================== 保存 ===================== */
+const store = {
+  get(key, fallback) { try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; } catch { return fallback; } },
+  set(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* 保存不可の環境では無視 */ } },
+};
+const owned = new Map(Object.entries(store.get("ecp.owned", {})).map(([k, v]) => [Number(k), Number(v)]));
+const buyOnly = new Set(store.get("ecp.buyOnly", []));
+const saveOwned = () => store.set("ecp.owned", Object.fromEntries(owned));
+const saveBuyOnly = () => store.set("ecp.buyOnly", [...buyOnly]);
+
+/* ===================== API ===================== */
+const cache = new Map();
+async function api(path, params) {
+  const qs = Object.entries(params).map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join("&");
+  const url = `${API}/${path}?${qs}`;
+  if (cache.has(url)) return cache.get(url);
+  let lastErr;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const res = await fetch(url);
+      if (res.ok) { const json = await res.json(); cache.set(url, json); return json; }
+      lastErr = new Error(`HTTP ${res.status}`);
+      if (res.status < 500 && res.status !== 429) break;
+    } catch (e) { lastErr = e; }
+    await new Promise(r => setTimeout(r, 600 * (attempt + 1)));
+  }
+  throw lastErr;
+}
+async function searchAll(params) {
+  const out = [];
+  let page = await api("search", { ...params, limit: 500 });
+  out.push(...page.results);
+  while (page.next) {
+    page = await api("search", { cursor: page.next, limit: 500, fields: params.fields, language: "ja" });
+    out.push(...page.results);
+  }
+  return out;
+}
+const chunks = (arr, n) => Array.from({ length: Math.ceil(arr.length / n) }, (_, i) => arr.slice(i * n, i * n + n));
+const iconUrl = icon => icon && icon.path ? `${API}/asset?path=${encodeURIComponent(icon.path)}&format=png` : "";
+
+const RECIPE_FIELDS = [
+  "ItemResult.Name", "ItemResult.Icon", "ItemResult.LevelEquip", "ItemResult.LevelItem@as(raw)",
+  "ItemResult.EquipSlotCategory@as(raw)", "ItemResult.IsUnique", "ItemResult.ItemUICategory@as(raw)", "ItemResult.BaseParam@as(raw)",
+  "CraftType.Name", "RecipeLevelTable.ClassJobLevel", "AmountResult",
+  "Ingredient[].Name", "Ingredient[].Icon", "Ingredient[].ItemUICategory@as(raw)", "AmountIngredient",
+  "SecretRecipeBook@as(raw)", "IsExpert",
+].join(",");
+
+/* ===================== データ ===================== */
+const items = new Map();     // id → {id, name, icon, uiCat}
+const recipes = new Map();   // 完成品id → {yield, lv, crafters[], ings[{id, amt}], secret, expert}
+const gatherable = new Set();
+let equipList = [];          // 装備候補（完成品単位）
+let selection = {};          // slot → itemId | null
+let make = {};               // slot → bool
+let matRows = [];            // 素材行（表示順）
+let filterShort = false;
+const jobInfo = new Map();   // 略称 → ジョブ情報
+const COMBAT = [1, 2, 4, 5], CRAFT = [70, 71, 11], GATHER = [72, 73, 10];
+
+/* ジョブに合わない能力値の装備（共通アクセサリーなど）を外し、相性を点数化する */
+function fitness(job, params) {
+  const has = list => list.some(p => params.includes(p));
+  if (job.group === "crafter") return has(COMBAT) || has(GATHER) ? -1 : 0;
+  if (job.group === "gatherer") return has(COMBAT) || has(CRAFT) ? -1 : 0;
+  if (has(CRAFT) || has(GATHER)) return -1;
+  if (has(COMBAT) && !params.includes(job.PrimaryStat)) return -1;
+  const first = params.find(p => p > 0);
+  if (job.group === "tank") return first === 3 ? 1 : 0;
+  return first === job.PrimaryStat ? 1 : 0;
+}
+
+function rememberItem(id, f) {
+  if (!id || items.has(id)) return;
+  items.set(id, { id, name: f.Name, icon: f.Icon, uiCat: f["ItemUICategory@as(raw)"] });
+}
+function ingestRecipe(r) {
+  const f = r.fields, res = f.ItemResult, id = res.row_id;
+  rememberItem(id, res.fields);
+  const ings = [];
+  f.Ingredient.forEach((ing, i) => {
+    const amt = f.AmountIngredient[i];
+    if (!ing.row_id || !amt) return;
+    rememberItem(ing.row_id, ing.fields);
+    ings.push({ id: ing.row_id, amt });
+  });
+  const entry = {
+    recipeId: r.row_id, yield: f.AmountResult || 1, lv: f.RecipeLevelTable.fields.ClassJobLevel,
+    crafter: f.CraftType.fields.Name, ings, secret: f["SecretRecipeBook@as(raw)"] > 0, expert: !!f.IsExpert,
+  };
+  const prev = recipes.get(id);
+  if (!prev) { entry.crafters = [entry.crafter]; recipes.set(id, entry); return; }
+  if (!prev.crafters.includes(entry.crafter)) prev.crafters.push(entry.crafter);
+  if (entry.lv < prev.lv) { entry.crafters = prev.crafters; recipes.set(id, entry); }
+}
+
+/* ===================== ジョブ一覧 ===================== */
+async function loadJobs() {
+  const data = await api("sheet/ClassJob", {
+    language: "ja", limit: 100,
+    fields: "Name,Abbreviation,Role,PrimaryStat,ClassJobCategory@as(raw),JobIndex,DohDolJobIndex",
+  });
+  // 装備条件に使えるジョブだけを残す（新ジョブでデータ未対応のものを除外）
+  const known = new Set(Object.keys((await api("sheet/ClassJobCategory/1", {})).fields));
+  const jobs = data.rows.map(r => ({ id: r.row_id, ...r.fields })).filter(j =>
+    j.Abbreviation && known.has(j.Abbreviation) && (j.JobIndex > 0 || j.DohDolJobIndex >= 0));
+  jobs.forEach(j => { j.group = groupOf(j); jobInfo.set(j.Abbreviation, j); });
+  function groupOf(j) {
+    const cat = j["ClassJobCategory@as(raw)"];
+    if (cat === 33) return "crafter";
+    if (cat === 32) return "gatherer";
+    if (j.Role === 1) return "tank";
+    if (j.Role === 4) return "healer";
+    if (j.Role === 2) return "melee";
+    return cat === 31 ? "caster" : "ranged";
+  }
+  const sel = document.getElementById("job");
+  sel.innerHTML = "";
+  for (const [key, label] of JOB_GROUPS) {
+    const og = document.createElement("optgroup");
+    og.label = label;
+    jobs.filter(j => j.group === key).forEach(j => {
+      const o = document.createElement("option");
+      o.value = j.Abbreviation; o.textContent = `${j.Name}（${j.Abbreviation}）`;
+      og.appendChild(o);
+    });
+    if (og.children.length) sel.appendChild(og);
+  }
+}
+
+/* ===================== 検索 ===================== */
+function setStatus(text, isError = false) {
+  const el = document.getElementById("status");
+  el.textContent = text; el.classList.toggle("error", isError);
+}
+
+async function runSearch(e) {
+  e?.preventDefault();
+  const job = document.getElementById("job").value;
+  const lv = clamp(+document.getElementById("level").value, 1, MAX_LEVEL);
+  const range = clamp(+document.getElementById("range").value, 1, 20);
+  document.getElementById("level").value = lv;
+  document.getElementById("range").value = range;
+  const exSecret = document.getElementById("exSecret").checked;
+  const exExpert = document.getElementById("exExpert").checked;
+  if (!job) return;
+  store.set("ecp.settings", { job, lv, range, exSecret, exExpert });
+
+  const btn = document.getElementById("searchBtn");
+  btn.disabled = true;
+  try {
+    setStatus("装備レシピを検索しています…");
+    const low = Math.max(1, lv - range + 1);
+    const results = await searchAll({
+      sheets: "Recipe", language: "ja", fields: RECIPE_FIELDS,
+      query: `+ItemResult.ClassJobCategory.${job}=true +ItemResult.LevelEquip>=${low} +ItemResult.LevelEquip<=${lv}`,
+    });
+    results.forEach(ingestRecipe);
+
+    // 完成品単位にまとめる
+    const byItem = new Map(), jobData = jobInfo.get(job);
+    for (const r of results) {
+      const res = r.fields.ItemResult, f = res.fields, cat = CATEGORY[f["EquipSlotCategory@as(raw)"]];
+      if (!cat) continue;
+      const rec = recipes.get(res.row_id);
+      if (exSecret && rec.secret) continue;
+      if (exExpert && rec.expert) continue;
+      const fit = fitness(jobData, f["BaseParam@as(raw)"] || []);
+      if (fit < 0) continue;
+      byItem.set(res.row_id, {
+        id: res.row_id, slot: cat[0], blocks: cat[1], ilvl: f["LevelItem@as(raw)"], elvl: f.LevelEquip, unique: !!f.IsUnique, fit,
+      });
+    }
+    equipList = [...byItem.values()].sort((a, b) => b.ilvl - a.ilvl || b.fit - a.fit || b.elvl - a.elvl || b.id - a.id);
+    chooseDefaults();
+
+    setStatus("素材のレシピをさかのぼっています…");
+    await expandMaterials(equipList.map(e => e.id));
+    renderSlots();
+    recomputeAndRender(true);
+    const n = Object.values(selection).filter(Boolean).length;
+    setStatus(equipList.length
+      ? `装備Lv ${low}〜${lv} の製作装備から ${n} 部位を選びました。`
+      : `装備Lv ${low}〜${lv} にこのジョブの製作装備が見つかりません。検索幅を広げてください。`);
+    document.getElementById("gearNote").textContent = `装備Lv ${low}〜${lv}`;
+  } catch (err) {
+    console.error(err);
+    setStatus(`データを取得できませんでした（${err.message}）。通信状況を確認して、もう一度「装備を検索」を押してください。`, true);
+  } finally {
+    btn.disabled = false;
+  }
+}
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, Number.isFinite(v) ? Math.round(v) : lo));
+
+function candidatesFor(slot) {
+  const key = slot.startsWith("ring") ? "ring" : slot;
+  return equipList.filter(e => e.slot === key);
+}
+function chooseDefaults() {
+  selection = {}; make = {};
+  for (const [slot] of SLOTS) {
+    const c = candidatesFor(slot);
+    selection[slot] = c[0]?.id ?? null;
+    make[slot] = true;
+  }
+  const rings = candidatesFor("ringR");
+  if (rings[0]?.unique) selection.ringR = rings[1]?.id ?? null;
+}
+function blockedSlots() {
+  const blocked = {};
+  for (const [slot] of SLOTS) {
+    const e = equipList.find(x => x.id === selection[slot]);
+    if (e && make[slot]) e.blocks.forEach(b => { blocked[b] = slot; });
+  }
+  return blocked;
+}
+
+/* 中間素材をさかのぼる */
+async function expandMaterials(rootIds) {
+  const checked = new Set(rootIds);
+  let frontier = [];
+  const push = id => {
+    if (checked.has(id)) return;
+    checked.add(id);
+    if (items.get(id)?.uiCat === CRYSTAL_UI_CATEGORY) return;
+    frontier.push(id);
+  };
+  rootIds.forEach(id => recipes.get(id)?.ings.forEach(i => push(i.id)));
+  for (let depth = 0; depth < MAX_DEPTH && frontier.length; depth++) {
+    const ids = frontier.filter(id => !recipes.has(id));
+    frontier = [];
+    for (const group of chunks(ids, CHUNK)) {
+      const res = await searchAll({
+        sheets: "Recipe", language: "ja", fields: RECIPE_FIELDS,
+        query: "+(" + group.map(id => `ItemResult=${id}`).join(" ") + ")",
+      });
+      res.forEach(ingestRecipe);
+    }
+    ids.forEach(id => recipes.get(id)?.ings.forEach(i => push(i.id)));
+    // 既知のレシピを持つ素材も下位まで確認
+    [...checked].forEach(id => recipes.get(id)?.ings.forEach(i => push(i.id)));
+  }
+  // 採集品の判定
+  const raws = [...checked].filter(id => !recipes.has(id) && !gatherable.has(id) && items.get(id)?.uiCat !== CRYSTAL_UI_CATEGORY);
+  for (const group of chunks(raws, CHUNK)) {
+    const res = await searchAll({
+      sheets: "GatheringItem", fields: "Item@as(raw)",
+      query: "+(" + group.map(id => `Item=${id}`).join(" ") + ")",
+    });
+    res.forEach(r => gatherable.add(r.fields["Item@as(raw)"]));
+  }
+}
+
+/* ===================== 計算 ===================== */
+function compute() {
+  const blocked = blockedSlots();
+  const roots = new Map();
+  for (const [slot] of SLOTS) {
+    if (!make[slot] || !selection[slot] || blocked[slot]) continue;
+    roots.set(selection[slot], (roots.get(selection[slot]) || 0) + 1);
+  }
+  const expandable = id => recipes.has(id) && (roots.has(id) || !buyOnly.has(id));
+  // 到達できる素材と入次数
+  const reach = new Set(), indeg = new Map();
+  const stack = [...roots.keys()];
+  stack.forEach(id => { reach.add(id); indeg.set(id, 0); });
+  while (stack.length) {
+    const id = stack.pop();
+    if (!expandable(id)) continue;
+    for (const ing of recipes.get(id).ings) {
+      indeg.set(ing.id, (indeg.get(ing.id) || 0) + 1);
+      if (!reach.has(ing.id)) { reach.add(ing.id); stack.push(ing.id); }
+    }
+  }
+  // トポロジカル順に必要数を流す
+  const need = new Map([...roots]), order = [], crafts = new Map();
+  const queue = [...roots.keys()].filter(id => indeg.get(id) === 0);
+  while (queue.length) {
+    const id = queue.shift();
+    order.push(id);
+    const req = need.get(id) || 0;
+    const net = Math.max(0, req - (owned.get(id) || 0));
+    if (expandable(id)) {
+      const r = recipes.get(id), times = Math.ceil(net / r.yield);
+      crafts.set(id, times);
+      for (const ing of r.ings) {
+        need.set(ing.id, (need.get(ing.id) || 0) + times * ing.amt);
+        indeg.set(ing.id, indeg.get(ing.id) - 1);
+        if (indeg.get(ing.id) === 0) queue.push(ing.id);
+      }
+    }
+  }
+  return { roots, need, order, crafts, expandable };
+}
+
+function kindOf(id, plan) {
+  if (recipes.has(id)) return plan.expandable(id) ? ["中間素材", "k-mid", 2] : ["中間素材（購入）", "", 1];
+  if (items.get(id)?.uiCat === CRYSTAL_UI_CATEGORY) return ["クリスタル", "", 3];
+  if (gatherable.has(id)) return ["採集品", "k-gather", 0];
+  return ["その他", "", 1];
+}
+
+/* ===================== 描画 ===================== */
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const dbLink = name => `<a href="${DB_SEARCH}${encodeURIComponent(name)}" target="_blank" rel="noopener">${esc(name)}</a>`;
+const img = (icon, size) => { const u = iconUrl(icon); return u ? `<img src="${u}" alt="" width="${size}" height="${size}" loading="lazy">` : `<span class="ico-ph"></span>`; };
+
+function renderSlots() {
+  const box = document.getElementById("slots");
+  if (!equipList.length) { box.innerHTML = `<p class="empty">該当する製作装備がありません。</p>`; return; }
+  const blocked = blockedSlots();
+  box.innerHTML = SLOTS.map(([slot, label]) => {
+    const cands = candidatesFor(slot), cur = equipList.find(e => e.id === selection[slot]);
+    let body;
+    if (blocked[slot]) {
+      body = `<p class="empty">${blocked[slot] === "main" ? "両手武器のため不要" : "胴装備と一体"}</p>`;
+    } else if (!cands.length) {
+      body = `<p class="empty">製作装備なし</p>`;
+    } else {
+      const it = cur && items.get(cur.id), rec = cur && recipes.get(cur.id);
+      const info = cur ? `<div class="item">${img(it.icon, 40)}<div style="min-width:0">
+          <div class="item-name">${dbLink(it.name)}</div>
+          <div class="meta"><span class="ilvl num">IL ${cur.ilvl}</span><span>装備Lv <span class="num">${cur.elvl}</span></span>
+          <span>${esc(rec.crafters.join("・"))} Lv<span class="num">${rec.lv}</span></span>
+          ${rec.secret ? `<span class="tag warn">秘伝書</span>` : ""}${rec.expert ? `<span class="tag warn">エキスパート</span>` : ""}${cur.unique ? `<span class="tag">ユニーク</span>` : ""}</div>
+        </div></div>` : `<p class="empty">作らない</p>`;
+      const opts = cands.map(c => `<option value="${c.id}"${c.id === selection[slot] ? " selected" : ""}>IL${c.ilvl} ${esc(items.get(c.id).name)}</option>`).join("");
+      body = `${info}<label class="sr" for="sel-${slot}">${label}の候補</label>
+        <select id="sel-${slot}" data-slot="${slot}"><option value="">（選ばない）</option>${opts}</select>`;
+    }
+    const on = make[slot] && !blocked[slot] && cur;
+    return `<article class="slot${on ? "" : " off"}">
+      <div class="slot-head"><span class="slot-name">${label}</span>
+      ${cands.length && !blocked[slot] ? `<label class="slot-make"><input type="checkbox" id="mk-${slot}" data-make="${slot}"${make[slot] ? " checked" : ""}> 作る</label>` : ""}</div>
+      ${body}</article>`;
+  }).join("");
+}
+
+function recomputeAndRender(rebuild) {
+  const plan = compute();
+  if (rebuild) buildMatRows(plan);
+  updateMatRows(plan);
+  renderSteps(plan);
+}
+
+function buildMatRows(plan) {
+  const ids = plan.order.filter(id => !plan.roots.has(id));
+  ids.sort((a, b) => kindOf(a, plan)[2] - kindOf(b, plan)[2] || a - b);
+  matRows = ids;
+  const body = document.getElementById("matBody");
+  if (!ids.length) { body.innerHTML = `<tr><td colspan="6" class="empty">素材はありません。</td></tr>`; return; }
+  body.innerHTML = ids.map(id => {
+    const it = items.get(id), [kind, cls] = kindOf(id, plan), isRecipe = recipes.has(id);
+    return `<tr data-id="${id}">
+      <td class="c-name"><div class="mat">${img(it.icon, 28)}<span>${dbLink(it.name)}</span></div></td>
+      <td class="c-kind"><span class="kind ${cls}">${kind}</span></td>
+      <td class="r num c-need" data-need data-label="必要数"></td>
+      <td class="r c-own" data-label="所持数"><label class="sr" for="own-${id}">${esc(it.name)}の所持数</label><input class="owned" id="own-${id}" data-own="${id}" type="number" min="0" inputmode="numeric" value="${owned.get(id) || ""}" placeholder="0"></td>
+      <td class="r num c-short" data-short data-label="不足"></td>
+      <td class="c-craft">${isRecipe ? `<label><input type="checkbox" data-craft="${id}"${buyOnly.has(id) ? "" : " checked"}> <span class="sr">${esc(it.name)}を</span>自作</label>` : ""}</td>
+    </tr>`;
+  }).join("");
+}
+
+function updateMatRows(plan) {
+  let shortKinds = 0, totalKinds = 0;
+  for (const tr of document.querySelectorAll("#matBody tr[data-id]")) {
+    const id = +tr.dataset.id, need = plan.need.get(id) || 0, short = Math.max(0, need - (owned.get(id) || 0));
+    tr.querySelector("[data-need]").textContent = need.toLocaleString();
+    const s = tr.querySelector("[data-short]");
+    s.textContent = short ? short.toLocaleString() : "✓";
+    s.className = "r num c-short " + (short ? "short" : "done");
+    const isMidCrafted = plan.expandable(id);
+    tr.classList.toggle("is-done", !short);
+    tr.hidden = filterShort && (!short || isMidCrafted);
+    if (!isMidCrafted) { totalKinds++; if (short) shortKinds++; }
+  }
+  document.getElementById("summary").innerHTML = matRows.length
+    ? `<span>集める・買う素材 <b class="num">${totalKinds}</b> 種</span><span>うち不足 <b class="num">${shortKinds}</b> 種</span>`
+    : "";
+}
+
+function renderSteps(plan) {
+  const list = [...plan.order].reverse().filter(id => plan.expandable(id) && plan.crafts.get(id) > 0);
+  const ol = document.getElementById("steps");
+  if (!list.length) { ol.innerHTML = `<li class="empty">作るものはありません。</li>`; return; }
+  ol.innerHTML = list.map(id => {
+    const r = recipes.get(id), t = plan.crafts.get(id), it = items.get(id);
+    return `<li><b>${dbLink(it.name)}</b> を <span class="num">${t}</span> 回製作（<span class="num">${t * r.yield}</span> 個）
+      <span class="who">${esc(r.crafters.join("・"))} Lv${r.lv}${plan.roots.has(id) ? "・装備" : ""}</span></li>`;
+  }).join("");
+}
+
+/* ===================== イベント ===================== */
+document.getElementById("queryForm").addEventListener("submit", runSearch);
+document.getElementById("slots").addEventListener("change", e => {
+  const t = e.target;
+  if (t.dataset.slot) selection[t.dataset.slot] = t.value ? +t.value : null;
+  if (t.dataset.make) make[t.dataset.make] = t.checked;
+  renderSlots();
+  recomputeAndRender(true);
+});
+document.getElementById("matBody").addEventListener("input", e => {
+  const id = +e.target.dataset.own;
+  if (!id) return;
+  const v = Math.max(0, Math.floor(+e.target.value || 0));
+  v ? owned.set(id, v) : owned.delete(id);
+  saveOwned();
+  recomputeAndRender(false);
+});
+document.getElementById("matBody").addEventListener("change", e => {
+  const id = +e.target.dataset.craft;
+  if (!id) return;
+  e.target.checked ? buyOnly.delete(id) : buyOnly.add(id);
+  saveBuyOnly();
+  recomputeAndRender(true);
+});
+for (const [btnId, short] of [["fAll", false], ["fShort", true]]) {
+  document.getElementById(btnId).addEventListener("click", () => {
+    filterShort = short;
+    document.getElementById("fAll").setAttribute("aria-pressed", String(!short));
+    document.getElementById("fShort").setAttribute("aria-pressed", String(short));
+    recomputeAndRender(false);
+  });
+}
+document.getElementById("copyBtn").addEventListener("click", async () => {
+  const plan = compute();
+  const lines = matRows.filter(id => !plan.expandable(id)).map(id => {
+    const short = Math.max(0, (plan.need.get(id) || 0) - (owned.get(id) || 0));
+    return short ? `${items.get(id).name} ×${short}` : null;
+  }).filter(Boolean);
+  const text = lines.length ? lines.join("\n") : "不足している素材はありません";
+  try { await navigator.clipboard.writeText(text); setStatus(`不足リスト（${lines.length}件）をコピーしました。`); }
+  catch {
+    const ta = document.getElementById("copyArea");
+    ta.value = text; ta.select(); document.execCommand?.("copy");
+    setStatus("コピーできない環境のため、リストを選択状態にしました。");
+  }
+});
+let resetArmed = false;
+document.getElementById("resetBtn").addEventListener("click", e => {
+  if (!resetArmed) {
+    resetArmed = true; e.target.textContent = "もう一度押すとリセット";
+    setTimeout(() => { resetArmed = false; e.target.textContent = "所持数をリセット"; }, 3000);
+    return;
+  }
+  resetArmed = false; e.target.textContent = "所持数をリセット";
+  owned.clear(); saveOwned();
+  document.querySelectorAll("input.owned").forEach(i => { i.value = ""; });
+  recomputeAndRender(false);
+  setStatus("所持数をリセットしました。");
+});
+
+/* ===================== 起動 ===================== */
+(async function init() {
+  const s = store.get("ecp.settings", null);
+  try {
+    await loadJobs();
+  } catch (err) {
+    setStatus("ジョブ一覧を取得できませんでした。ページを再読み込みしてください。", true);
+    return;
+  }
+  const sel = document.getElementById("job");
+  if (s) {
+    if ([...sel.options].some(o => o.value === s.job)) sel.value = s.job;
+    document.getElementById("level").value = s.lv;
+    document.getElementById("range").value = s.range;
+    document.getElementById("exSecret").checked = !!s.exSecret;
+    document.getElementById("exExpert").checked = s.exExpert !== false;
+  } else {
+    sel.value = "PLD";
+  }
+  runSearch();   // 前回の条件（初回はナイトLv50の例）で一覧を表示
+})();
+</script>
+</body>
+</html>
