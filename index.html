@@ -74,6 +74,10 @@ form.query { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px
 .slot-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .slot-name { font-size: .78rem; letter-spacing: .08em; color: var(--muted); }
 .slot-make { font-size: .82rem; display: flex; gap: 4px; align-items: center; }
+.slot-make.locked { color: var(--muted); cursor: not-allowed; }
+.slot-make.locked input { cursor: not-allowed; }
+.gear-bar { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; margin-top: 12px; }
+.gear-bar .hint { font-size: .85rem; color: var(--muted); }
 .item { display: grid; grid-template-columns: 40px 1fr; gap: 10px; align-items: center; min-width: 0; }
 .item img, .ico-ph { width: 40px; height: 40px; border-radius: 4px; background: var(--bg); border: 1px solid var(--line); }
 .item-name { font-weight: 700; overflow-wrap: anywhere; }
@@ -150,6 +154,13 @@ footer { font-size: .8rem; color: var(--muted); border-top: 1px solid var(--line
 
   <section aria-labelledby="gearTitle">
     <h2 id="gearTitle">装備一式 <small id="gearNote"></small></h2>
+    <div class="gear-bar">
+      <div class="seg" role="group" aria-label="作成する装備の選び方">
+        <button type="button" id="modeAll" aria-pressed="true">すべて作成</button>
+        <button type="button" id="modeSome" aria-pressed="false">一部作成</button>
+      </div>
+      <span class="hint" id="modeHint"></span>
+    </div>
     <div class="slots" id="slots" style="margin-top:12px"><p class="empty">ジョブとレベルを選んで「装備を検索」を押してください。</p></div>
   </section>
 
@@ -273,6 +284,7 @@ const gatherable = new Set();
 let equipList = [];          // 装備候補（完成品単位）
 let selection = {};          // slot → itemId | null
 let make = {};               // slot → bool
+let craftMode = store.get("ecp.craftMode", "all") === "some" ? "some" : "all";  // all=すべて作成 / some=一部作成
 let matRows = [];            // 素材行（表示順）
 let filterShort = false;
 const jobInfo = new Map();   // 略称 → ジョブ情報
@@ -421,7 +433,7 @@ function chooseDefaults() {
   for (const [slot] of SLOTS) {
     const c = candidatesFor(slot);
     selection[slot] = c[0]?.id ?? null;
-    make[slot] = true;
+    make[slot] = craftMode === "all";
   }
   const rings = candidatesFor("ringR");
   if (rings[0]?.unique) selection.ringR = rings[1]?.id ?? null;
@@ -546,12 +558,12 @@ function renderSlots() {
         </div></div>` : `<p class="empty">作らない</p>`;
       const opts = cands.map(c => `<option value="${c.id}"${c.id === selection[slot] ? " selected" : ""}>IL${c.ilvl} ${esc(items.get(c.id).name)}</option>`).join("");
       body = `${info}<label class="sr" for="sel-${slot}">${label}の候補</label>
-        <select id="sel-${slot}" data-slot="${slot}"><option value="">（選ばない）</option>${opts}</select>`;
+        <select id="sel-${slot}" data-slot="${slot}">${craftMode === "some" || !selection[slot] ? `<option value="">（選ばない）</option>` : ""}${opts}</select>`;
     }
     const on = make[slot] && !blocked[slot] && cur;
     return `<article class="slot${on ? "" : " off"}">
       <div class="slot-head"><span class="slot-name">${label}</span>
-      ${cands.length && !blocked[slot] ? `<label class="slot-make"><input type="checkbox" id="mk-${slot}" data-make="${slot}"${make[slot] ? " checked" : ""}> 作る</label>` : ""}</div>
+      ${cands.length && !blocked[slot] ? `<label class="slot-make${craftMode === "all" ? " locked" : ""}"><input type="checkbox" id="mk-${slot}" data-make="${slot}"${make[slot] ? " checked" : ""}${craftMode === "all" ? " disabled" : ""}> 作る</label>` : ""}</div>
       ${body}</article>`;
   }).join("");
 }
@@ -568,7 +580,7 @@ function buildMatRows(plan) {
   ids.sort((a, b) => kindOf(a, plan)[2] - kindOf(b, plan)[2] || a - b);
   matRows = ids;
   const body = document.getElementById("matBody");
-  if (!ids.length) { body.innerHTML = `<tr><td colspan="6" class="empty">素材はありません。</td></tr>`; return; }
+  if (!ids.length) { body.innerHTML = `<tr><td colspan="6" class="empty">${noneChosenMsg() || "素材はありません。"}</td></tr>`; return; }
   body.innerHTML = ids.map(id => {
     const it = items.get(id), [kind, cls] = kindOf(id, plan), isRecipe = recipes.has(id);
     return `<tr data-id="${id}">
@@ -603,7 +615,7 @@ function updateMatRows(plan) {
 function renderSteps(plan) {
   const list = [...plan.order].reverse().filter(id => plan.expandable(id) && plan.crafts.get(id) > 0);
   const ol = document.getElementById("steps");
-  if (!list.length) { ol.innerHTML = `<li class="empty">作るものはありません。</li>`; return; }
+  if (!list.length) { ol.innerHTML = `<li class="empty">${noneChosenMsg() || "作るものはありません。"}</li>`; return; }
   ol.innerHTML = list.map(id => {
     const r = recipes.get(id), t = plan.crafts.get(id), it = items.get(id);
     return `<li><b>${dbLink(it.name)}</b> を <span class="num">${t}</span> 回製作（<span class="num">${t * r.yield}</span> 個）
@@ -611,12 +623,43 @@ function renderSteps(plan) {
   }).join("");
 }
 
+/* ===================== 作成モード ===================== */
+function noneChosenMsg() {
+  return craftMode === "some" && equipList.length && !SLOTS.some(([slot]) => make[slot] && selection[slot])
+    ? "作る装備の「作る」にチェックを入れてください。" : "";
+}
+function renderMode() {
+  document.getElementById("modeAll").setAttribute("aria-pressed", String(craftMode === "all"));
+  document.getElementById("modeSome").setAttribute("aria-pressed", String(craftMode === "some"));
+  document.getElementById("modeHint").textContent = craftMode === "all"
+    ? "全部位を作成します（チェックは変更できません）"
+    : "作る部位にチェックを入れてください";
+}
+function setCraftMode(mode) {
+  craftMode = mode;
+  store.set("ecp.craftMode", mode);
+  for (const [slot] of SLOTS) make[slot] = mode === "all";
+  if (mode === "all") {   // 「選ばない」にしていた部位は最上位の候補に戻す
+    for (const [slot] of SLOTS) if (!selection[slot]) selection[slot] = candidatesFor(slot)[0]?.id ?? null;
+    const rings = candidatesFor("ringR");
+    if (rings[0]?.unique && selection.ringR === selection.ringL) selection.ringR = rings[1]?.id ?? null;
+  }
+  renderMode();
+  if (equipList.length) { renderSlots(); recomputeAndRender(true); }
+}
+document.getElementById("modeAll").addEventListener("click", () => setCraftMode("all"));
+document.getElementById("modeSome").addEventListener("click", () => setCraftMode("some"));
+renderMode();
+
 /* ===================== イベント ===================== */
 document.getElementById("queryForm").addEventListener("submit", runSearch);
 document.getElementById("slots").addEventListener("change", e => {
   const t = e.target;
   if (t.dataset.slot) selection[t.dataset.slot] = t.value ? +t.value : null;
-  if (t.dataset.make) make[t.dataset.make] = t.checked;
+  if (t.dataset.make) {
+    if (craftMode === "all") { t.checked = true; return; }   // すべて作成中は変更不可
+    make[t.dataset.make] = t.checked;
+  }
   renderSlots();
   recomputeAndRender(true);
 });
